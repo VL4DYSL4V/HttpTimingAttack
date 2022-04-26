@@ -94,7 +94,6 @@ public class FileSystemAuthenticator implements Authenticator {
     }
 
     private void process(String username, Collection<? extends String> passwords) {
-        System.out.println(passwords);
         passwords
                 .forEach(p -> {
                     Credentials c = new Credentials(username, p);
