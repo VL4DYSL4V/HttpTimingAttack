@@ -76,13 +76,14 @@ public class FileSystemAuthenticator implements Authenticator {
 
                 long delta = millisAfter - millisBefore;
 
-                Colors color = delta < millis ? Colors.RED : Colors.GREEN;
+                Colors color = delta > millis ? Colors.RED : Colors.GREEN;
                 String res = String.format(
-                        "%s\t%d\t|\t%s\t|\t%s\t%s",
+                        "%s\t%d\t|\t%s\t|\t%s\t%s\t%s",
                         color.getValue(),
                         response.statusCode(),
                         credentials.getUsername(),
                         credentials.getPassword(),
+                        delta > millis ? "Failure" : "Success",
                         defaultColor.getValue()
                 );
                 System.out.println(res);
@@ -103,24 +104,25 @@ public class FileSystemAuthenticator implements Authenticator {
 
     @Override
     public void authenticate() {
-        try (BufferedReader usernameReader = Files.newBufferedReader(usernameListPath);
-             BufferedReader passwordReader = Files.newBufferedReader(passwordListPath)) {
+        try (BufferedReader usernameReader = Files.newBufferedReader(usernameListPath)) {
             for (String username; (username = usernameReader.readLine()) != null; ) {
                 List<String> passwords = new ArrayList<>(batchSize);
-                for (String password; (password = passwordReader.readLine()) != null; ) {
-                    passwords.add(password);
-                    if (passwords.size() == batchSize) {
+                try (BufferedReader passwordReader = Files.newBufferedReader(passwordListPath)) {
+                    for (String password; (password = passwordReader.readLine()) != null; ) {
+                        passwords.add(password);
+                        if (passwords.size() == batchSize) {
+                            process(username, passwords);
+                            passwords = new ArrayList<>(batchSize);
+                        }
+                    }
+                    if (!passwords.isEmpty()) {
                         process(username, passwords);
-                        passwords = new ArrayList<>(batchSize);
                     }
                 }
-                if (!passwords.isEmpty()) {
-                    process(username, passwords);
-                }
             }
-            executorService.shutdown();
         } catch (Throwable e) {
             throw new RuntimeException(e);
         }
+        executorService.shutdown();
     }
 }
