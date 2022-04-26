@@ -4,6 +4,7 @@ import enums.HttpMethod;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
+import lombok.ToString;
 import org.kohsuke.args4j.Option;
 
 import java.net.MalformedURLException;
@@ -13,6 +14,7 @@ import java.util.Locale;
 @RequiredArgsConstructor
 @Getter
 @Setter
+@ToString
 public class CommandLineArgsDto {
 
     @Option(name = "-users-file", usage = "Sets a path to file with usernames")

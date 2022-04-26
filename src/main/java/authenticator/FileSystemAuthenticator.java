@@ -17,10 +17,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 public class FileSystemAuthenticator implements Authenticator {
@@ -55,7 +53,7 @@ public class FileSystemAuthenticator implements Authenticator {
             HttpClient httpClient = HttpClient.newBuilder()
                     .version(HttpClient.Version.HTTP_1_1)
                     .followRedirects(HttpClient.Redirect.NORMAL)
-                    .connectTimeout(Duration.ofSeconds(20))
+                    .connectTimeout(Duration.ofMillis(2L * millis))
                     .build();
 
             HttpRequest.Builder requestBuilder = HttpRequest
@@ -95,14 +93,13 @@ public class FileSystemAuthenticator implements Authenticator {
         }
     }
 
-    private Collection<CompletableFuture<Void>> process(String username, Collection<? extends String> passwords) {
-        return passwords
-                .stream()
-                .map(p -> {
+    private void process(String username, Collection<? extends String> passwords) {
+        System.out.println(passwords);
+        passwords
+                .forEach(p -> {
                     Credentials c = new Credentials(username, p);
-                    return CompletableFuture.runAsync(new CredentialsCheckTask(c), executorService);
-                })
-                .collect(Collectors.toList());
+                    executorService.submit(new CredentialsCheckTask(c));
+                });
     }
 
     @Override
@@ -122,6 +119,7 @@ public class FileSystemAuthenticator implements Authenticator {
                     process(username, passwords);
                 }
             }
+            executorService.shutdown();
         } catch (Throwable e) {
             throw new RuntimeException(e);
         }
