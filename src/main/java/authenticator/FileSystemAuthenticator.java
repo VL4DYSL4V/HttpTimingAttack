@@ -103,6 +103,7 @@ public class FileSystemAuthenticator implements Authenticator {
 
     @Override
     public CompletableFuture<Collection<Credentials>> authenticate() {
+        Throwable thrown = null;
         final CompletableFuture<Collection<Credentials>> out = new CompletableFuture<>();
         long nameCount = 0;
         long passwordCount = 0;
@@ -127,20 +128,23 @@ public class FileSystemAuthenticator implements Authenticator {
                 }
             }
         } catch (Throwable e) {
+            thrown = e;
             throw new RuntimeException(e);
         } finally {
-            final long taskCount = nameCount * passwordCount;
-            int delay = 10;
-            int rate = 10;
-            progressTrackingService.scheduleAtFixedRate(
-                    () -> {
-                        if (taskCount == completedTasksAmount.get()) {
-                            out.complete(this.credentialsThatFitTimeout);
-                            progressTrackingService.shutdownNow();
-                        }
-                    }, delay, rate, TimeUnit.SECONDS
-            );
             executorService.shutdown();
+            if (thrown == null) {
+                final long taskCount = nameCount * passwordCount;
+                int delay = 10;
+                int rate = 10;
+                progressTrackingService.scheduleAtFixedRate(
+                        () -> {
+                            if (taskCount == completedTasksAmount.get()) {
+                                out.complete(this.credentialsThatFitTimeout);
+                                progressTrackingService.shutdownNow();
+                            }
+                        }, delay, rate, TimeUnit.SECONDS
+                );
+            }
         }
         return out;
     }
