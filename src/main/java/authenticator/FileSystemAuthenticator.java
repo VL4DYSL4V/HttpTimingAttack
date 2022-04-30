@@ -50,6 +50,7 @@ public class FileSystemAuthenticator implements Authenticator {
             HttpRequest.Builder requestBuilder = HttpRequest
                     .newBuilder()
                     .uri(URI.create(dto.getUrl().toString()))
+                    .header("Content-Type", "application/json")
                     .setHeader("User-Agent", "Bot");
 
             Map<String, String> formData = new HashMap<>();
@@ -58,7 +59,7 @@ public class FileSystemAuthenticator implements Authenticator {
 
             HttpRequest request = Objects.equals(dto.getHttpMethod(), HttpMethod.GET)
                     ? requestBuilder.GET().build()
-                    : requestBuilder.POST(HttpUtils.ofFormData(formData)).build();
+                    : requestBuilder.POST(HttpUtils.jsonPublisher(formData)).build();
 
             long millisBefore = System.currentTimeMillis();
             try {
@@ -85,6 +86,7 @@ public class FileSystemAuthenticator implements Authenticator {
                 );
                 System.out.println(res);
             } catch (IOException | InterruptedException e) {
+                e.printStackTrace();
                 throw new RuntimeException(e);
             } finally {
                 completedTasksAmount.incrementAndGet();
