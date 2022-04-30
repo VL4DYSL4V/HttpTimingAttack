@@ -1,5 +1,6 @@
 package authenticator;
 
+import dto.CommandLineArgsDto;
 import dto.Credentials;
 import enums.Colors;
 import enums.HttpMethod;
@@ -9,39 +10,35 @@ import utils.HttpUtils;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.net.URI;
-import java.net.URL;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 
-@RequiredArgsConstructor
 public class FileSystemAuthenticator implements Authenticator {
-
-    private final Path usernameListPath;
-
-    private final Path passwordListPath;
-
-    private final URL url;
-
-    private final HttpMethod httpMethod;
-
-    private final String usernameFormParameter;
-
-    private final String passwordFormParameter;
-
-    private final int millis;
-
-    private final ExecutorService executorService = Executors
-            .newFixedThreadPool(Runtime.getRuntime().availableProcessors() + 1);
-    private final int batchSize = Runtime.getRuntime().availableProcessors() + 1;
-
+    private final CommandLineArgsDto dto;
+    private final ExecutorService executorService;
+    private final int batchSize;
     private final Colors defaultColor = Colors.GREEN;
+    private final HttpClient httpClient;
+    private final Collection<Credentials> credentialsThatFitTimeout = new CopyOnWriteArrayList<>();
+    private final AtomicLong completedTasksAmount = new AtomicLong(0);
+    private final ScheduledExecutorService progressTrackingService = new ScheduledThreadPoolExecutor(1);
+
+    public FileSystemAuthenticator(CommandLineArgsDto dto) {
+        this.dto = dto;
+        this.executorService = Executors.newFixedThreadPool(dto.getThreadCount());
+        this.batchSize = dto.getThreadCount();
+        this.httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofMillis(2L * dto.getMillis()))
+                .build();
+    }
 
     @RequiredArgsConstructor
     private class CredentialsCheckTask implements Runnable {
@@ -50,22 +47,16 @@ public class FileSystemAuthenticator implements Authenticator {
 
         @Override
         public void run() {
-            HttpClient httpClient = HttpClient.newBuilder()
-                    .version(HttpClient.Version.HTTP_1_1)
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .connectTimeout(Duration.ofMillis(2L * millis))
-                    .build();
-
             HttpRequest.Builder requestBuilder = HttpRequest
                     .newBuilder()
-                    .uri(URI.create(url.toString()))
+                    .uri(URI.create(dto.getUrl().toString()))
                     .setHeader("User-Agent", "Bot");
 
             Map<String, String> formData = new HashMap<>();
-            formData.put(usernameFormParameter, credentials.getUsername());
-            formData.put(passwordFormParameter, credentials.getPassword());
+            formData.put(dto.getUsernameFormParameter(), credentials.getUsername());
+            formData.put(dto.getPasswordFormParameter(), credentials.getPassword());
 
-            HttpRequest request = Objects.equals(httpMethod, HttpMethod.GET)
+            HttpRequest request = Objects.equals(dto.getHttpMethod(), HttpMethod.GET)
                     ? requestBuilder.GET().build()
                     : requestBuilder.POST(HttpUtils.ofFormData(formData)).build();
 
@@ -76,19 +67,27 @@ public class FileSystemAuthenticator implements Authenticator {
 
                 long delta = millisAfter - millisBefore;
 
-                Colors color = delta > millis ? Colors.RED : Colors.GREEN;
+                boolean isTimeoutConditionMet = dto.getTimeOutOption()
+                        .isTimeoutConditionMet(dto.getMillis(), delta);
+                Colors color = isTimeoutConditionMet ? Colors.GREEN : Colors.RED;
+                if (isTimeoutConditionMet) {
+                    credentialsThatFitTimeout.add(credentials);
+                }
                 String res = String.format(
-                        "%s\t%d\t|\t%s\t|\t%s\t%s\t%s",
+                        "%s\t# %d\t|%d\t|\t%s\t|\t%s\t%s\t%s",
                         color.getValue(),
+                        completedTasksAmount.get() + 1,
                         response.statusCode(),
                         credentials.getUsername(),
                         credentials.getPassword(),
-                        delta > millis ? "Failure" : "Success",
+                        isTimeoutConditionMet ? "Success" : "Failure",
                         defaultColor.getValue()
                 );
                 System.out.println(res);
             } catch (IOException | InterruptedException e) {
                 throw new RuntimeException(e);
+            } finally {
+                completedTasksAmount.incrementAndGet();
             }
 
         }
@@ -103,12 +102,19 @@ public class FileSystemAuthenticator implements Authenticator {
     }
 
     @Override
-    public void authenticate() {
-        try (BufferedReader usernameReader = Files.newBufferedReader(usernameListPath)) {
+    public CompletableFuture<Collection<Credentials>> authenticate() {
+        final CompletableFuture<Collection<Credentials>> out = new CompletableFuture<>();
+        long nameCount = 0;
+        long passwordCount = 0;
+        try (BufferedReader usernameReader = Files.newBufferedReader(dto.getUsersFile())) {
             for (String username; (username = usernameReader.readLine()) != null; ) {
+                nameCount++;
                 List<String> passwords = new ArrayList<>(batchSize);
-                try (BufferedReader passwordReader = Files.newBufferedReader(passwordListPath)) {
+                try (BufferedReader passwordReader = Files.newBufferedReader(dto.getPasswordsFile())) {
                     for (String password; (password = passwordReader.readLine()) != null; ) {
+                        if (nameCount == 1) {
+                            passwordCount++;
+                        }
                         passwords.add(password);
                         if (passwords.size() == batchSize) {
                             process(username, passwords);
@@ -122,7 +128,20 @@ public class FileSystemAuthenticator implements Authenticator {
             }
         } catch (Throwable e) {
             throw new RuntimeException(e);
+        } finally {
+            final long taskCount = nameCount * passwordCount;
+            int delay = 10;
+            int rate = 10;
+            progressTrackingService.scheduleAtFixedRate(
+                    () -> {
+                        if (taskCount == completedTasksAmount.get()) {
+                            out.complete(this.credentialsThatFitTimeout);
+                            progressTrackingService.shutdownNow();
+                        }
+                    }, delay, rate, TimeUnit.SECONDS
+            );
+            executorService.shutdown();
         }
-        executorService.shutdown();
+        return out;
     }
 }

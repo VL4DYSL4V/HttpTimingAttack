@@ -1,7 +1,12 @@
 package authenticator;
 
+import dto.Credentials;
+
+import java.util.Collection;
+import java.util.concurrent.CompletableFuture;
+
 public interface Authenticator {
 
-    void authenticate();
+    CompletableFuture<Collection<Credentials>> authenticate();
 
 }
